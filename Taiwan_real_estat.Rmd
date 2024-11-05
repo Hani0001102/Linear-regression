@@ -1,0 +1,208 @@
+---
+title: "Linear regression"
+author: "Ngoc Tram"
+date: "2024-10-28"
+output: html_document
+---
+
+\`\`
+
+```{r}
+# Load necessary library
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(ggfortify)
+library(car)
+library(relaimpo)
+library(rms)
+```
+
+# 1. Load data and general data
+
+```{r}
+# Load data
+df <- read.csv("/Users/truongngoctram/Documents/Đu/R/nhap/taiwan_real_estate.csv")
+
+# General information of dataset
+glimpse(df)
+```
+
+```{r}
+# Rename the columns
+df <- df %>% rename(house.age= house_age_years,
+              house.price.of.unit.area = price_twd_msq,
+              number.of.convenience.stores = n_convenience,
+              distance.to.the.nearest.MRT.station = dist_to_mrt_m)
+
+head(df)
+```
+
+# 2. Missing value and duplicate values
+
+```{r}
+sum(is.na(df))
+
+
+df[duplicated(df),]
+
+df <- df %>% distinct()
+
+```
+
+# 3. Check correlation "house.price.of.unit.area" with others
+
+```{r}
+library(reshape2)
+
+non_numeric_cols <- sapply(taiwan_real_estate, function(x) !is.numeric(x))
+
+correlation_matrix <- cor(taiwan_real_estate[!non_numeric_cols])
+
+ggplot(data = melt(correlation_matrix), aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient(low = "blue", high = "red") +
+  theme_minimal() +
+  labs(title = "Correlation Heatmap")
+```
+
+## 3.1 with "n_convenience"
+
+```{r}
+ggplot(data = df, aes(x = number.of.convenience.stores, y = house.price.of.unit.area)) + geom_point() + geom_smooth(method = "lm")
+
+```
+
+-   We observe that "price_twd_msq" is expected to rise slightly in accordance with the larger value of "n_convenience". There could be a positive relation.
+-   Yet, we need the median of each class to ensure clarity on this matter. As a result, we use the box plot chart
+
+```{r}
+# Change type of "n_convenience" from int to factor so that we can see the median of each class of "n_convenience"
+df$number.of.convenience.stores <- as.factor(df$number.of.convenience.stores)
+
+ggplot(data = df, aes(x = number.of.convenience.stores, y = house.price.of.unit.area)) + geom_boxplot()
+```
+
+-   With the observation of median of each class, the more quantity of "n_convenience" have, the more "price_twd_msq" increase
+
+## 3.2 with "house.age"
+
+```{r}
+ggplot(data = df, aes(x = house.age, y = house.price.of.unit.area)) + geom_boxplot()
+
+```
+
+-   The older the house, the lower the price.
+-   Median price of class 30-45 is lower than class 0-15
+-   However, it is not significantly right because the median of class 30-45 has a slightly higher price than class 15-30.
+
+## 3.3 with "distance.to.the.nearest.MRT.station"
+
+```{r}
+ggplot(data = df, aes(x = distance.to.the.nearest.MRT.station, y = house.price.of.unit.area)) + geom_point() + geom_smooth(method = "lm")
+```
+
+-   It is possible that there is a rather negative correlation.
+
+```{r}
+# use Spearman's Rank Correlation
+cor.test(df$distance.to.the.nearest.MRT.station, df$house.price.of.unit.area, method = "spearman")
+```
+
+-   rho = -0.775 and p-value = 2.2e-16 =\> significantly negative correlation and statistical meaning
+-   It also consolidates for the previous result
+
+```{r}
+```
+
+# 4. Build a linear regression model
+
+## 4.1 Check hypothesis of linear regression
+
+```{r}
+# Change type of number.of.convenience.stores from factor to int
+df$number.of.convenience.stores = as.integer(df$number.of.convenience.stores)
+
+# Build model 
+model1 <- lm(data = df, house.price.of.unit.area ~ distance.to.the.nearest.MRT.station + number.of.convenience.stores + house.age)
+
+summary(model1)
+```
+
+-   R-squared = 0.537 =\> Model1 can explain 53.7% variance of house.price.of.unit.area.
+-   And all of p-value of elements also \<0.05 =\> all slope of parameters in model are subtaintially statistical meaning
+-   The slope for house.age (-1.613, -1.750) give us information that "house.price.of.unit.area" of class "house.age0 to15" is higher than others
+-   Model1 = house.price.of.unit.area = 12.061 + -0.002 x distance.to.the.nearest.MRT.station + 0.340 x number.of.convenience.stores + -1.613 x house.age15 to 30 + -1.750 x house.age30 to 45
+
+## 4.2 Check assumption of linear regression
+
+```{r}
+autoplot(model1)
+```
+
+-   Residual vs Fitted: The blue line remains mostly straight and lacks of curvature. This implies that the mean value of residuals is approximately 0, which aligns with the standard of linear regression
+-   Normal Q-Q: More than 80% of the remaining quantity is available on qq-line. It closely resembles a normal distribution
+-   Scale-location: The blue line is straightened out a bit and does not have any curves. The variance of residuals slightly stay stable, consistent with the principle of linear regression
+-   Residual vs Leverage: We have a single point that exhibits the highest leverage. Because it still have the residual close to 0, therefore it’s unnecessary to remove this point as an outlier.
+
+## 4.3 Check the multicollinearity
+
+```{r}
+vif(model1)
+```
+
+-   Multicollinearity is absent because all components have a VIF \< 5.
+
+## 4.4 Testing model
+
+### 4.4.1 Use bootstrap method
+
+```{r}
+library(rms)
+m1 <- ols(data = df, house.price.of.unit.area ~ distance.to.the.nearest.MRT.station + number.of.convenience.stores + house.age, x = TRUE, y = TRUE)
+
+# Check whether the parameter is stable or not when wesample with replacement 1000 times
+val <- validate(m1, method = "boot", B = 1000)
+
+val
+
+```
+
+-   We can conclude that the parameters in the "training" column are nearly equivalent to those in the "origin" column . Consequently, we can utilize it for the bootstrap method
+
+```{r}
+# We 
+cal <- calibrate(m1, method = "boot", B=1000)
+
+plot(cal, las = 1)
+```
+
+-   The MAE we obtained is 0.432 and it is quite low. We can infer that the predicted values generated by model1 closely match the actual observation
+
+### 4.4.2 Use the k-fold validation method
+
+```{r}
+library(caret)
+
+# We divided data into 2 groups: 70% train, 30% test
+index <- createDataPartition(y = df$house.price.of.unit.area, p = 0.7, list = F)
+train <- df[index,]
+test <- df[-index,]
+
+
+# Buid model base on train data
+fit.train <- train(data = train, house.price.of.unit.area ~ distance.to.the.nearest.MRT.station + number.of.convenience.stores + house.age, method = "lm", trControl = control, metric = "Rsquared")
+
+# Use above model to caculate the predict value in test data
+pred <- predict(fit.train, test)
+
+# Create a dataframe with predict value (pred) and observation (test$house.price.of.unit.area)
+model.values <- data.frame(obs = test$house.price.of.unit.area, pred)
+
+# Evaluate the fit of model
+defaultSummary(model.values)
+
+```
+
+-   The RMSE and MAE metrics indicate low values. We can state that predicted values generated by model1 are roughly equivalent to the actual observation
+-   Finally , we can use Model1 = house.price.of.unit.area = 12.061 + -0.002 x distance.to.the.nearest.MRT.station + 0.340 x number.of.convenience.stores + -1.613 x house.age15 to 30 + -1.750 x house.age30 to 45
